@@ -6,7 +6,8 @@ BINS=$(TESTS:tests/%.c=%)
 
 test: malloc.so $(BINS) 
 	@for n in $(BINS); do \
-			bash tests/run.sh $$n; \
+			bash tests/run.sh tests/$$n; \
     done
+	bash tests/run.sh /bin/ls;
 %: tests/%.c
 	clang -o tests/$@ $<

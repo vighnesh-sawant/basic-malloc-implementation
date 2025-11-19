@@ -24,6 +24,6 @@ int main() {
 
   ptr = (char *)malloc(65535);
   free(ptr);
-  printf("TEST PASSED");
+  printf("TEST PASSED\n");
   return 0;
 }
