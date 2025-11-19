@@ -11,6 +11,31 @@ struct meta {
 struct meta *head = NULL;
 struct meta *last = NULL;
 
+void breakChunk(struct meta *curr, size_t size) {
+
+  int finalSize = curr->size - size - meta_size;
+  if (finalSize > 0) {
+
+    curr->size = size;
+    curr = curr + 1;
+    void *ptr = (void *)curr;
+    ptr = ptr + size;
+    curr = (struct meta *)ptr;
+
+    if (head == NULL) {
+      head = curr;
+    } else if (last == NULL) {
+      head->next = curr;
+      last = curr;
+    } else {
+      last->next = curr;
+      last = curr;
+    }
+    curr->size = (size_t)finalSize;
+    curr->next = NULL;
+  }
+}
+
 void *getSpace(size_t size) {
   if (head != NULL) {
     struct meta *curr = head;
@@ -31,6 +56,7 @@ void *getSpace(size_t size) {
             last = prev;
           }
         }
+        breakChunk(curr, size);
         return (void *)(curr + 1);
 
       } else {
