@@ -10,7 +10,34 @@ struct meta {
 
 struct meta* head = NULL;
 
-void insertIntoList(struct meta* ptr, struct meta** ptrPrev) {
+void removeFromList(struct meta* curr) {
+  struct meta* prev = *(struct meta**)(curr + 1);
+  if (curr == head) {
+    head = curr->next;
+
+  } else {
+    prev->next = curr->next;
+  }
+}
+
+void insertHelper(struct meta* curr, struct meta** ptrPrev, struct meta* ptr) {
+  struct meta* prev = *(struct meta**)(curr + 1);
+  if (curr == head) {
+    ptr->next = curr;
+    *ptrPrev = NULL;
+    *(struct meta**)(curr + 1) = ptr;
+    head = ptr;
+  } else {
+    ptr->next = curr;
+
+    *ptrPrev = prev;
+    *(struct meta**)(curr + 1) = ptr;
+    prev->next = ptr;
+  }
+}
+
+void insertIntoList(struct meta* ptr) {
+  struct meta** ptrPrev = (struct meta**)(ptr + 1);
   if (head == NULL) {
     head = ptr;
     *ptrPrev = NULL;
@@ -18,18 +45,20 @@ void insertIntoList(struct meta* ptr, struct meta** ptrPrev) {
     struct meta* curr = head;
     while (1) {
       if (ptr > curr) {
-        struct meta* prev = *(struct meta**)(curr + 1);
-        if (curr == head) {
-          ptr->next = curr;
-          *ptrPrev = NULL;
-          *(struct meta**)(curr + 1) = ptr;
-          head = ptr;
-        } else {
-          ptr->next = curr;
+        struct meta* end = (struct meta*)((void*)(curr + 1) + curr->size);
 
-          *ptrPrev = prev;
-          *(struct meta**)(curr + 1) = ptr;
-          prev->next = ptr;
+        insertHelper(curr, ptrPrev, ptr);
+        if (curr != NULL) {
+          struct meta* end = (struct meta*)((void*)(ptr + 1) + ptr->size);
+          if (end == curr) {
+            removeFromList(curr);
+            ptr->size = ptr->size + meta_size + curr->next->size;
+          }
+        }
+        if (end == ptr) {
+          removeFromList(ptr);
+          curr->size = curr->size + ptr->size + meta_size;
+          break;
         }
         break;
       } else {
@@ -50,17 +79,7 @@ void free(void* ptr) {
   struct meta* curr = (struct meta*)ptr;
   curr = curr - 1;
   curr->next = NULL;
-  struct meta** prev = (struct meta**)(curr + 1);
-  insertIntoList(curr, prev);
-}
-
-void removeFromList(struct meta* curr, struct meta* prev) {
-  if (curr == head) {
-    head = curr->next;
-
-  } else {
-    prev->next = curr->next;
-  }
+  insertIntoList(curr);
 }
 
 void breakChunk(struct meta* curr, size_t size) {
@@ -85,8 +104,7 @@ void* getSpace(size_t size) {
 
     while (1) {
       if (curr->size >= size) {
-        struct meta* prev = *(struct meta**)(curr + 1);
-        removeFromList(curr, prev);
+        removeFromList(curr);
         breakChunk(curr, size);
         return (void*)(curr + 1);
 
