@@ -9,5 +9,7 @@ test: malloc.so $(BINS)
 			bash tests/run.sh tests/$$n; \
     done
 	bash tests/run.sh /bin/ls;
+	bash tests/run.sh firefox;
 %: tests/%.c
 	clang -o tests/$@ $<
+
