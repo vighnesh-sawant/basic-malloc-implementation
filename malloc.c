@@ -6,10 +6,35 @@ struct meta {
   struct meta *next;
 };
 
-#define meta_size sizeof(struct meta)
+struct endmeta {
+  size_t isFree;
+  struct meta *start;
+};
+
+#define meta_size sizeof(struct meta) + sizeof(struct endmeta)
 
 struct meta *head = NULL;
 struct meta *last = NULL;
+
+int isFree(struct meta *curr) {
+  struct endmeta *end = (struct endmeta *)((void *)(curr + 1) + curr->size);
+  return end->isFree;
+}
+
+void insertIntoList(struct meta *curr, struct meta **prev) {
+
+  if (head == NULL) {
+    head = curr;
+  } else if (last == NULL) {
+    head->next = curr;
+    last = curr;
+    *prev = head;
+  } else {
+    last->next = curr;
+    last = curr;
+  }
+}
+void coalesce(struct meta *curr) {}
 
 void free(void *ptr) {
 
@@ -18,16 +43,31 @@ void free(void *ptr) {
   }
   struct meta *curr = (struct meta *)ptr;
   curr = curr - 1;
-  if (head == NULL) {
-    head = curr;
-  } else if (last == NULL) {
-    head->next = curr;
-    last = curr;
+  curr->next = NULL;
+  struct endmeta *end = (struct endmeta *)((void *)(curr + 1) + curr->size);
+  end->isFree = 1;
+  struct meta **prev = (struct meta **)(curr + 1);
+  *prev = last;
+  insertIntoList(curr, prev);
+}
+
+void removeFromList(struct meta *curr, struct meta *prev) {
+
+  if (curr == head) {
+    head = curr->next;
+
+    if (curr->next == NULL) {
+      last = NULL;
+    }
   } else {
-    last->next = curr;
-    last = curr;
+    prev->next = curr->next;
+
+    if (curr->next == NULL) {
+      last = prev;
+    }
   }
 }
+
 void breakChunk(struct meta *curr, size_t size) {
 
   int finalSize = curr->size - size -
@@ -41,7 +81,9 @@ void breakChunk(struct meta *curr, size_t size) {
     curr = (struct meta *)ptr;
 
     curr->size = (size_t)finalSize;
-    curr->next = NULL;
+
+    struct endmeta *end = (struct endmeta *)((void *)(curr + 1) + curr->size);
+    end->start = curr;
     free((void *)(curr + 1));
   }
 }
@@ -50,24 +92,13 @@ void *getSpace(size_t size) {
 
   if (head != NULL) {
     struct meta *curr = head;
-    struct meta *prev = head;
+
     while (1) {
       if (curr->size >= size) {
-        if (curr == head) {
-          head = curr->next;
-
-          if (curr->next == NULL) {
-            last = NULL;
-          }
-        } else {
-          prev->next = curr->next;
-
-          if (curr->next == NULL) {
-            last = prev;
-          }
-        }
+        struct meta *prev = *(struct meta **)(curr + 1);
+        removeFromList(curr, prev);
         breakChunk(curr, size);
-        return (void *)(curr + 1);
+        return (void *)(curr + 1); // change this
 
       } else {
         if (curr->next == NULL) {
@@ -75,7 +106,6 @@ void *getSpace(size_t size) {
         }
 
         curr = curr->next;
-        prev = curr;
       }
     }
   }
@@ -85,14 +115,16 @@ void *getSpace(size_t size) {
     return NULL;
   }
   request->size = size;
-  request->next = NULL;
-
-  return (void *)(request + 1);
+  struct endmeta *end =
+      (struct endmeta *)((void *)(request + 1) + request->size);
+  end->start = request;
+  end->isFree = 1;
+  return (void *)(request + 1); // change this
 }
 
 size_t alignSize(size_t size) {
-  int s = ((int)size + meta_size - 1) / meta_size;
-  s = s * meta_size; // meta_size is always right size for aligned
+  int s = ((int)size + 16 - 1) / 16;
+  s = s * 16;
   return (size_t)s;
 }
 
@@ -125,7 +157,7 @@ void *realloc(void *ptr, size_t size) {
 
   if (curr->size >= size) {
     breakChunk(curr, size);
-    return (void *)(curr + 1);
+    return (void *)(curr + 1); // change this
   }
 
   void *request = malloc(size);
