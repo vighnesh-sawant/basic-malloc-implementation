@@ -10,59 +10,73 @@ struct meta {
 
 struct meta* head = NULL;
 
+void setPrev(struct meta* curr, struct meta* prev) {
+  if (curr != NULL) {
+    *(struct meta**)(curr + 1) = prev;
+  }
+}
+
 void removeFromList(struct meta* curr) {
   struct meta* prev = *(struct meta**)(curr + 1);
   if (curr == head) {
     head = curr->next;
-
+    setPrev(curr->next, NULL);
   } else {
     prev->next = curr->next;
+    setPrev(curr->next, prev);
   }
 }
 
-void insertHelper(struct meta* curr, struct meta** ptrPrev, struct meta* ptr) {
-  struct meta* prev = *(struct meta**)(curr + 1);
+void insertHelper(struct meta* curr, struct meta* ptr) {
   if (curr == head) {
     ptr->next = curr;
-    *ptrPrev = NULL;
-    *(struct meta**)(curr + 1) = ptr;
+    setPrev(ptr, NULL);
+    setPrev(curr, ptr);
     head = ptr;
   } else {
     ptr->next = curr;
-
-    *ptrPrev = prev;
-    *(struct meta**)(curr + 1) = ptr;
+    struct meta* prev = *(struct meta**)(curr + 1);
     prev->next = ptr;
+    setPrev(curr, ptr);
+    setPrev(ptr, prev);
   }
 }
 
 void insertIntoList(struct meta* ptr) {
-  struct meta** ptrPrev = (struct meta**)(ptr + 1);
   if (head == NULL) {
     head = ptr;
-    *ptrPrev = NULL;
+    setPrev(ptr, NULL);
   } else {
     struct meta* curr = head;
     while (1) {
-      if (ptr > curr) {
-        struct meta* end = (struct meta*)((void*)(curr + 1) + curr->size);
+      if (ptr < curr) {
+        struct meta* end = (struct meta*)((void*)(ptr + 1) + ptr->size);
 
-        insertHelper(curr, ptrPrev, ptr);
-        if (curr != NULL) {
-          struct meta* end = (struct meta*)((void*)(ptr + 1) + ptr->size);
-          if (end == curr) {
-            removeFromList(curr);
-            ptr->size = ptr->size + meta_size + curr->next->size;
-          }
-        }
-        if (end == ptr) {
-          removeFromList(ptr);
-          curr->size = curr->size + ptr->size + meta_size;
+        insertHelper(curr, ptr);
+        if (end == curr) {
+          removeFromList(curr);
+          ptr->size = ptr->size + curr->size + meta_size;
           break;
+        }
+        if (curr != head) {
+          struct meta* prev = *(struct meta**)(curr + 1);
+          struct meta* end = (struct meta*)((void*)(prev + 1) + prev->size);
+          if (end == ptr) {
+            removeFromList(ptr);
+            prev->size = ptr->size + meta_size + prev->size;
+          }
         }
         break;
       } else {
         if (curr->next == NULL) {
+          struct meta* end = (struct meta*)((void*)(curr + 1) + curr->size);
+          if (end == ptr) {
+            curr->size = curr->size + ptr->size + meta_size;
+            break;
+          }
+          curr->next = ptr;
+          setPrev(ptr, curr);
+          ptr->next = NULL;
           break;
         }
 
@@ -98,7 +112,23 @@ void breakChunk(struct meta* curr, size_t size) {
   }
 }
 
+void* requestSpace(size_t size) {
+  // long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+  // if (size > PAGE_SIZE - meta_size) {
+  //}
+  struct meta* request = (struct meta*)sbrk(size + meta_size);
+  if ((void*)request == (void*)-1) {
+    return NULL;
+  }
+  request->size = size;
+  return (void*)(request + 1);
+}
+
 void* getSpace(size_t size) {
+  // long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+  // if (size > PAGE_SIZE - meta_size) {
+  // requestSpace(size);
+  //}
   if (head != NULL) {
     struct meta* curr = head;
 
@@ -117,13 +147,7 @@ void* getSpace(size_t size) {
       }
     }
   }
-
-  struct meta* request = (struct meta*)sbrk(size + meta_size);
-  if ((void*)request == (void*)-1) {
-    return NULL;
-  }
-  request->size = size;
-  return (void*)(request + 1);
+  return requestSpace(size);
 }
 
 size_t alignSize(size_t size) {
