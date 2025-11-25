@@ -180,6 +180,10 @@ void* realloc(void* ptr, size_t size) {
   if (ptr == NULL) {
     return malloc(size);
   }
+  if (size == 0) {
+    free(ptr);
+    return NULL;
+  }
   struct meta* curr = (struct meta*)ptr;
   curr = curr - 1;
 
