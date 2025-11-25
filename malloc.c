@@ -1,14 +1,22 @@
 #include <stddef.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 struct meta {
   size_t size;
   struct meta* next;
+  struct meta* pre;
+  struct meta* nex;
 };
 
-#define meta_size sizeof(struct meta)
+struct bt {
+  size_t isFree;
+  struct meta* curr;
+};
+#define meta_size sizeof(struct meta) + sizeof(struct bt)
 
 struct meta* head = NULL;
+struct meta* last = NULL;
 
 void setPrev(struct meta* curr, struct meta* prev) {
   if (curr != NULL) {
@@ -27,61 +35,22 @@ void removeFromList(struct meta* curr) {
   }
 }
 
-void insertHelper(struct meta* curr, struct meta* ptr) {
-  if (curr == head) {
-    ptr->next = curr;
-    setPrev(ptr, NULL);
-    setPrev(curr, ptr);
-    head = ptr;
-  } else {
-    ptr->next = curr;
-    struct meta* prev = *(struct meta**)(curr + 1);
-    prev->next = ptr;
-    setPrev(curr, ptr);
-    setPrev(ptr, prev);
-  }
-}
-
 void insertIntoList(struct meta* ptr) {
+  if (ptr->size == 0) {
+    return;
+  }
   if (head == NULL) {
     head = ptr;
     setPrev(ptr, NULL);
   } else {
-    struct meta* curr = head;
-    while (1) {
-      if (ptr < curr) {
-        struct meta* end = (struct meta*)((void*)(ptr + 1) + ptr->size);
-
-        insertHelper(curr, ptr);
-        if (end == curr) {
-          removeFromList(curr);
-          ptr->size = ptr->size + curr->size + meta_size;
-          break;
-        }
-        if (curr != head) {
-          struct meta* prev = *(struct meta**)(curr + 1);
-          struct meta* end = (struct meta*)((void*)(prev + 1) + prev->size);
-          if (end == ptr) {
-            removeFromList(ptr);
-            prev->size = ptr->size + meta_size + prev->size;
-          }
-        }
-        break;
-      } else {
-        if (curr->next == NULL) {
-          struct meta* end = (struct meta*)((void*)(curr + 1) + curr->size);
-          if (end == ptr) {
-            curr->size = curr->size + ptr->size + meta_size;
-            break;
-          }
-          curr->next = ptr;
-          setPrev(ptr, curr);
-          ptr->next = NULL;
-          break;
-        }
-
-        curr = curr->next;
-      }
+    if (last == NULL) {
+      head->next = ptr;
+      last = ptr;
+      setPrev(ptr, head);
+    } else {
+      last->next = ptr;
+      setPrev(ptr, last);
+      last = ptr;
     }
   }
 }
@@ -92,20 +61,29 @@ void free(void* ptr) {
   }
   struct meta* curr = (struct meta*)ptr;
   curr = curr - 1;
+  long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+  if (curr->size > PAGE_SIZE - meta_size) {
+    munmap((void*)curr, curr->size);
+    return;
+  }
   curr->next = NULL;
+  struct bt* end = (struct bt*)((void*)(curr + 1) + curr->size);
+  end->isFree = 1;
   insertIntoList(curr);
 }
 
 void breakChunk(struct meta* curr, size_t size) {
   int finalSize = curr->size - size -
                   meta_size;  // int to prevent underflow, i was missing that.
+  struct meta* prev = curr;
   if (finalSize > 0) {
     curr->size = size;
     curr = curr + 1;
     void* ptr = (void*)curr;
     ptr = ptr + size;
     curr = (struct meta*)ptr;
-
+    prev->nex = curr;
+    curr->pre = prev;
     curr->size = (size_t)finalSize;
 
     free((void*)(curr + 1));
@@ -113,22 +91,27 @@ void breakChunk(struct meta* curr, size_t size) {
 }
 
 void* requestSpace(size_t size) {
-  // long PAGE_SIZE = sysconf(_SC_PAGESIZE);
-  // if (size > PAGE_SIZE - meta_size) {
-  //}
-  struct meta* request = (struct meta*)sbrk(size + meta_size);
-  if ((void*)request == (void*)-1) {
+  void* addr = mmap(NULL, size + meta_size, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+  if (addr == MAP_FAILED) {
     return NULL;
   }
-  request->size = size;
-  return (void*)(request + 1);
+  struct meta* curr = (struct meta*)addr;
+  curr->size = size;
+  struct bt* end = (struct bt*)((void*)(curr + 1) + curr->size);
+  end->isFree = 0;
+  end->curr = curr;
+  curr->pre = NULL;
+  curr->nex = NULL;
+  return (void*)(curr + 1);
 }
 
 void* getSpace(size_t size) {
-  // long PAGE_SIZE = sysconf(_SC_PAGESIZE);
-  // if (size > PAGE_SIZE - meta_size) {
-  // requestSpace(size);
-  //}
+  long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+  if (size > PAGE_SIZE - meta_size) {
+    requestSpace(size);
+  }
   if (head != NULL) {
     struct meta* curr = head;
 
@@ -147,7 +130,11 @@ void* getSpace(size_t size) {
       }
     }
   }
-  return requestSpace(size);
+  void* request = requestSpace(size);
+  struct meta* curr = (struct meta*)request;
+  curr = curr - 1;
+  breakChunk(curr, size);
+  return request;
 }
 
 size_t alignSize(size_t size) {
@@ -186,9 +173,11 @@ void* realloc(void* ptr, size_t size) {
   }
   struct meta* curr = (struct meta*)ptr;
   curr = curr - 1;
-
+  long PAGE_SIZE = sysconf(_SC_PAGESIZE);
   if (curr->size >= size) {
-    breakChunk(curr, size);
+    if (!(curr->size > PAGE_SIZE - meta_size)) {
+      breakChunk(curr, size);
+    }
     return (void*)(curr + 1);  // change this
   }
 
