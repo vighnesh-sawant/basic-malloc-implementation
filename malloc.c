@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stddef.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -5,33 +6,43 @@
 struct meta {
   size_t size;
   struct meta* next;
-  struct meta* pre;
-  struct meta* nex;
+  struct meta* preAdj;
+  struct meta* nextAdj;
+  size_t isFree;
+  struct meta* prev;
 };
 
-struct bt {
-  size_t isFree;
-  struct meta* curr;
-};
-#define meta_size sizeof(struct meta) + sizeof(struct bt)
+#define meta_size sizeof(struct meta)
 
 struct meta* head = NULL;
 struct meta* last = NULL;
 
 void setPrev(struct meta* curr, struct meta* prev) {
   if (curr != NULL) {
-    *(struct meta**)(curr + 1) = prev;
+    curr->prev = prev;
   }
 }
 
 void removeFromList(struct meta* curr) {
-  struct meta* prev = *(struct meta**)(curr + 1);
+  struct meta* prev = curr->prev;
+  if (curr->isFree == 0) {
+    return;
+  }
   if (curr == head) {
     head = curr->next;
     setPrev(curr->next, NULL);
+    if (curr->next == last) {
+      last = NULL;
+    }
   } else {
+    if (prev == NULL) {
+      return;
+    }
     prev->next = curr->next;
     setPrev(curr->next, prev);
+    if (curr == last) {
+      last = prev;
+    }
   }
 }
 
@@ -39,6 +50,7 @@ void insertIntoList(struct meta* ptr) {
   if (ptr->size == 0) {
     return;
   }
+  ptr->next = NULL;
   if (head == NULL) {
     head = ptr;
     setPrev(ptr, NULL);
@@ -63,13 +75,32 @@ void free(void* ptr) {
   curr = curr - 1;
   long PAGE_SIZE = sysconf(_SC_PAGESIZE);
   if (curr->size > PAGE_SIZE - meta_size) {
-    munmap((void*)curr, curr->size);
+    munmap((void*)curr, curr->size + meta_size);
     return;
   }
   curr->next = NULL;
-  struct bt* end = (struct bt*)((void*)(curr + 1) + curr->size);
-  end->isFree = 1;
+  curr->isFree = 1;
   insertIntoList(curr);
+  if (curr->nextAdj != NULL) {
+    if (curr->nextAdj->isFree == 1) {
+      removeFromList(curr->nextAdj);
+      curr->size = curr->size + curr->nextAdj->size + meta_size;
+      curr->nextAdj = curr->nextAdj->nextAdj;
+      if (curr->nextAdj != NULL) {
+        curr->nextAdj->preAdj = curr;
+      }
+    }
+  }
+  if (curr->preAdj != NULL) {
+    if (curr->preAdj->isFree == 1) {
+      removeFromList(curr);
+      curr->preAdj->size = curr->size + curr->preAdj->size + meta_size;
+      curr->preAdj->nextAdj = curr->nextAdj;
+      if (curr->nextAdj != NULL) {
+        curr->nextAdj->preAdj = curr->preAdj;
+      }
+    }
+  }
 }
 
 void breakChunk(struct meta* curr, size_t size) {
@@ -82,8 +113,8 @@ void breakChunk(struct meta* curr, size_t size) {
     void* ptr = (void*)curr;
     ptr = ptr + size;
     curr = (struct meta*)ptr;
-    prev->nex = curr;
-    curr->pre = prev;
+    prev->nextAdj = NULL;
+    curr->preAdj = prev;
     curr->size = (size_t)finalSize;
 
     free((void*)(curr + 1));
@@ -91,26 +122,30 @@ void breakChunk(struct meta* curr, size_t size) {
 }
 
 void* requestSpace(size_t size) {
-  void* addr = mmap(NULL, size + meta_size, PROT_READ | PROT_WRITE,
+  long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+  long finalSize = (size + meta_size + PAGE_SIZE - 1) / PAGE_SIZE;
+  finalSize = (finalSize)*PAGE_SIZE;
+  finalSize = finalSize - meta_size;
+  void* addr = mmap(NULL, finalSize, PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   if (addr == MAP_FAILED) {
     return NULL;
   }
+
   struct meta* curr = (struct meta*)addr;
-  curr->size = size;
-  struct bt* end = (struct bt*)((void*)(curr + 1) + curr->size);
-  end->isFree = 0;
-  end->curr = curr;
-  curr->pre = NULL;
-  curr->nex = NULL;
+  curr->size = finalSize;
+  curr->preAdj = NULL;
+  curr->isFree = 0;
+  curr->nextAdj = NULL;
+  curr->next = NULL;
   return (void*)(curr + 1);
 }
 
 void* getSpace(size_t size) {
   long PAGE_SIZE = sysconf(_SC_PAGESIZE);
   if (size > PAGE_SIZE - meta_size) {
-    requestSpace(size);
+    return requestSpace(size);
   }
   if (head != NULL) {
     struct meta* curr = head;
@@ -125,7 +160,9 @@ void* getSpace(size_t size) {
         if (curr->next == NULL) {
           break;
         }
-
+        if (curr == last) {
+          break;
+        }
         curr = curr->next;
       }
     }
@@ -168,7 +205,7 @@ void* realloc(void* ptr, size_t size) {
     return malloc(size);
   }
   if (size == 0) {
-    free(ptr);
+    // free(ptr);
     return NULL;
   }
   struct meta* curr = (struct meta*)ptr;
